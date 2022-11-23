@@ -1,6 +1,3 @@
-//go:build http_adapter_fiber
-// +build http_adapter_fiber
-
 package fiber
 
 import (

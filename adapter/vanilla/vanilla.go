@@ -1,6 +1,3 @@
-//go:build http_adapter_vanilla
-// +build http_adapter_vanilla
-
 package vanilla
 
 import (

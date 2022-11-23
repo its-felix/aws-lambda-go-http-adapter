@@ -1,6 +1,3 @@
-//go:build http_adapter_echo
-// +build http_adapter_echo
-
 package echo
 
 import (

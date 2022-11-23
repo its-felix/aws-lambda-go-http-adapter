@@ -17,7 +17,6 @@ Simple HTTP adapter for AWS Lambda
 ## Usage
 ### Creating the Adapter
 #### net/http
-Build tag: `http_adapter_vanilla`
 ```golang
 package main
 
@@ -38,7 +37,6 @@ func main() {
 ```
 
 #### Echo
-Build tag: `http_adapter_echo`
 ```golang
 package main
 
@@ -59,7 +57,6 @@ func main() {
 ```
 
 #### Fiber
-Build tag: `http_adapter_fiber`
 ```golang
 package main
 
