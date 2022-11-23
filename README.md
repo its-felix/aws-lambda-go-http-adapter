@@ -1,6 +1,9 @@
 # aws-lambda-go-http-adapter
 Simple HTTP adapter for AWS Lambda
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/its-felix/aws-lambda-go-http-adapter.svg)](https://pkg.go.dev/github.com/its-felix/aws-lambda-go-http-adapter)
+[![Go Report](https://goreportcard.com/badge/github.com/its-felix/aws-lambda-go-http-adapter?style=flat-square)](https://goreportcard.com/report/github.com/its-felix/aws-lambda-go-http-adapter)
+
 ## Builtin support for these event formats:
 - AWS Lambda Function URL
 - API Gateway (v1)
