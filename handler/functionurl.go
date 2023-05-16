@@ -76,6 +76,39 @@ func functionURLResponseFinalizer(ctx context.Context, w *ResponseWriterProxy) (
 	return out, nil
 }
 
+func functionURLStreamingResponseInitializer(ctx context.Context) *ResponseWriterProxy {
+	return NewResponseWriterProxy()
+}
+
+func functionURLStreamingResponseFinalizer(ctx context.Context, w *ResponseWriterProxy) (events.LambdaFunctionURLStreamingResponse, error) {
+	out := events.LambdaFunctionURLStreamingResponse{
+		StatusCode: w.Status,
+		Headers:    make(map[string]string),
+		Cookies:    make([]string, 0),
+		Body:       &w.Body,
+	}
+
+	for k, values := range w.Headers {
+		if strings.EqualFold("set-cookie", k) {
+			out.Cookies = values
+		} else {
+			if len(values) == 0 {
+				out.Headers[k] = ""
+			} else if len(values) == 1 {
+				out.Headers[k] = values[0]
+			} else {
+				out.Headers[k] = strings.Join(values, ",")
+			}
+		}
+	}
+
+	return out, nil
+}
+
 func NewFunctionURLHandler(adapter AdapterFunc) func(context.Context, events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
 	return NewHandler(functionURLRequestConverter, functionURLResponseInitializer, functionURLResponseFinalizer, adapter)
+}
+
+func NewFunctionURLStreamingHandler(adapter AdapterFunc) func(context.Context, events.LambdaFunctionURLRequest) (events.LambdaFunctionURLStreamingResponse, error) {
+	return NewHandler(functionURLRequestConverter, functionURLStreamingResponseInitializer, functionURLStreamingResponseFinalizer, adapter)
 }

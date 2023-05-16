@@ -5,7 +5,7 @@ Simple HTTP adapter for AWS Lambda
 [![Go Report](https://goreportcard.com/badge/github.com/its-felix/aws-lambda-go-http-adapter?style=flat-square)](https://goreportcard.com/report/github.com/its-felix/aws-lambda-go-http-adapter)
 
 ## Builtin support for these event formats:
-- AWS Lambda Function URL
+- AWS Lambda Function URL (both normal and streaming)
 - API Gateway (v1)
 - API Gateway (v2)
 
@@ -111,7 +111,7 @@ func main() {
 }
 ```
 
-#### Lambda Function URL
+#### Lambda Function URL (normal)
 ```golang
 package main
 
@@ -123,6 +123,23 @@ import (
 func main() {
 	adapter := [...] // see above
 	h := handler.NewFunctionURLHandler(adapter)
+	
+	lambda.Start(h)
+}
+```
+
+#### Lambda Function URL (streaming)
+```golang
+package main
+
+import (
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/its-felix/aws-lambda-go-http-adapter/handler"
+)
+
+func main() {
+	adapter := [...] // see above
+	h := handler.NewFunctionURLStreamingHandler(adapter)
 	
 	lambda.Start(h)
 }
