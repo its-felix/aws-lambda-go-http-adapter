@@ -80,7 +80,7 @@ func functionURLStreamingResponseInitializer(ctx context.Context) *ResponseWrite
 	return NewResponseWriterProxy()
 }
 
-func functionURLStreamingResponseFinalizer(ctx context.Context, w *ResponseWriterProxy) (events.LambdaFunctionURLStreamingResponse, error) {
+func functionURLStreamingResponseFinalizer(ctx context.Context, w *ResponseWriterProxy) (*events.LambdaFunctionURLStreamingResponse, error) {
 	out := events.LambdaFunctionURLStreamingResponse{
 		StatusCode: w.Status,
 		Headers:    make(map[string]string),
@@ -102,13 +102,13 @@ func functionURLStreamingResponseFinalizer(ctx context.Context, w *ResponseWrite
 		}
 	}
 
-	return out, nil
+	return &out, nil
 }
 
 func NewFunctionURLHandler(adapter AdapterFunc) func(context.Context, events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
 	return NewHandler(functionURLRequestConverter, functionURLResponseInitializer, functionURLResponseFinalizer, adapter)
 }
 
-func NewFunctionURLStreamingHandler(adapter AdapterFunc) func(context.Context, events.LambdaFunctionURLRequest) (events.LambdaFunctionURLStreamingResponse, error) {
+func NewFunctionURLStreamingHandler(adapter AdapterFunc) func(context.Context, events.LambdaFunctionURLRequest) (*events.LambdaFunctionURLStreamingResponse, error) {
 	return NewHandler(functionURLRequestConverter, functionURLStreamingResponseInitializer, functionURLStreamingResponseFinalizer, adapter)
 }
