@@ -180,8 +180,15 @@ func (w *functionURLStreamingResponseWriter) WriteHeader(statusCode int) {
 		}
 
 		w.resCh <- w.res
-		close(w.resCh)
 	}
+}
+
+func (w *functionURLStreamingResponseWriter) Close() error {
+	if w.body == nil {
+		return nil
+	}
+
+	return w.body.Close()
 }
 
 func handleFunctionURLStreaming(ctx context.Context, event events.LambdaFunctionURLRequest, adapter AdapterFunc) (*events.LambdaFunctionURLStreamingResponse, error) {
@@ -192,20 +199,22 @@ func handleFunctionURLStreaming(ctx context.Context, event events.LambdaFunction
 
 	resCh := make(chan *events.LambdaFunctionURLStreamingResponse)
 	errCh := make(chan error)
-	w := functionURLStreamingResponseWriter{
-		headers: make(http.Header),
-		resCh:   resCh,
-	}
 
-	go func() {
-		defer w.body.Close()
+	go func(resCh chan<- *events.LambdaFunctionURLStreamingResponse, errCh chan<- error) {
+		defer close(resCh)
+		defer close(errCh)
+
+		w := functionURLStreamingResponseWriter{
+			headers: make(http.Header),
+			resCh:   resCh,
+		}
+
+		defer w.Close()
 
 		if err := adapter(ctx, req, &w); err != nil {
 			errCh <- err
 		}
-
-		close(errCh)
-	}()
+	}(resCh, errCh)
 
 	select {
 	case res := <-resCh:
