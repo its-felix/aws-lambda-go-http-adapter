@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"github.com/aws/aws-lambda-go/events"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -139,7 +140,7 @@ func NewFunctionURLHandler(adapter AdapterFunc) func(context.Context, events.Lam
 // region streaming
 type functionURLStreamingResponseWriter struct {
 	headers http.Header
-	body    bytes.Buffer
+	body    io.WriteCloser
 	res     *events.LambdaFunctionURLStreamingResponse
 	resCh   chan<- *events.LambdaFunctionURLStreamingResponse
 }
@@ -155,10 +156,12 @@ func (w *functionURLStreamingResponseWriter) Write(p []byte) (int, error) {
 
 func (w *functionURLStreamingResponseWriter) WriteHeader(statusCode int) {
 	if w.res == nil {
+		pr, pw := io.Pipe()
+		w.body = pw
 		w.res = &events.LambdaFunctionURLStreamingResponse{
 			StatusCode: statusCode,
 			Headers:    make(map[string]string),
-			Body:       &w.body,
+			Body:       pr,
 			Cookies:    make([]string, 0),
 		}
 
@@ -195,6 +198,8 @@ func handleFunctionURLStreaming(ctx context.Context, event events.LambdaFunction
 	}
 
 	go func() {
+		defer w.body.Close()
+
 		if err := adapter(ctx, req, &w); err != nil {
 			errCh <- err
 		}
