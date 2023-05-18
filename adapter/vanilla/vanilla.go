@@ -1,3 +1,5 @@
+//go:build !lambdahttpadapter.partial || (lambdahttpadapter.partial && lambdahttpadapter.vanilla)
+
 package vanilla
 
 import (

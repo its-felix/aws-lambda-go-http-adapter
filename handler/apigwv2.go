@@ -1,15 +1,19 @@
+//go:build !lambdahttpadapter.partial || (lambdahttpadapter.partial && lambdahttpadapter.apigwv2)
+
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"github.com/aws/aws-lambda-go/events"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
-func apiGwV2RequestConverter(ctx context.Context, event events.APIGatewayV2HTTPRequest) (*http.Request, error) {
+func convertApiGwV2Request(ctx context.Context, event events.APIGatewayV2HTTPRequest) (*http.Request, error) {
 	url := buildFullRequestURL(event.RequestContext.DomainName, event.RawPath, event.RequestContext.HTTP.Path, buildQuery(event.RawQueryString, event.QueryStringParameters))
 	req, err := http.NewRequestWithContext(ctx, event.RequestContext.HTTP.Method, url, getBody(event.Body, event.IsBase64Encoded))
 	if err != nil {
@@ -40,46 +44,89 @@ func apiGwV2RequestConverter(ctx context.Context, event events.APIGatewayV2HTTPR
 	return req, nil
 }
 
-func apiGwV2ResponseInitializer(ctx context.Context) *ResponseWriterProxy {
-	return NewResponseWriterProxy()
+type apiGwV2ResponseWriter struct {
+	headersWritten   bool
+	contentTypeSet   bool
+	contentLengthSet bool
+	headers          http.Header
+	body             bytes.Buffer
+	res              events.APIGatewayV2HTTPResponse
 }
 
-func apiGwV2ResponseFinalizer(ctx context.Context, w *ResponseWriterProxy) (events.APIGatewayV2HTTPResponse, error) {
-	out := events.APIGatewayV2HTTPResponse{
-		StatusCode: w.Status,
-		Headers:    make(map[string]string),
-		Cookies:    make([]string, 0),
-	}
+func (w *apiGwV2ResponseWriter) Header() http.Header {
+	return w.headers
+}
 
-	for k, values := range w.Headers {
-		if strings.EqualFold("set-cookie", k) {
-			out.Cookies = values
-		} else {
-			if len(values) == 0 {
-				out.Headers[k] = ""
-			} else if len(values) == 1 {
-				out.Headers[k] = values[0]
+func (w *apiGwV2ResponseWriter) Write(p []byte) (int, error) {
+	w.WriteHeader(http.StatusOK)
+	return w.body.Write(p)
+}
+
+func (w *apiGwV2ResponseWriter) WriteHeader(statusCode int) {
+	if !w.headersWritten {
+		w.headersWritten = true
+		w.res.StatusCode = statusCode
+
+		for k, values := range w.headers {
+			if strings.EqualFold("set-cookie", k) {
+				w.res.Cookies = values
 			} else {
-				if out.MultiValueHeaders == nil {
-					out.MultiValueHeaders = make(map[string][]string)
-				}
+				if len(values) == 0 {
+					w.res.Headers[k] = ""
+				} else if len(values) == 1 {
+					w.res.Headers[k] = values[0]
+				} else {
+					if w.res.MultiValueHeaders == nil {
+						w.res.MultiValueHeaders = make(map[string][]string)
+					}
 
-				out.MultiValueHeaders[k] = values
+					w.res.MultiValueHeaders[k] = values
+				}
 			}
 		}
 	}
+}
 
-	b := w.Body.Bytes()
-	if utf8.Valid(b) {
-		out.Body = string(b)
-	} else {
-		out.IsBase64Encoded = true
-		out.Body = base64.StdEncoding.EncodeToString(b)
+func handleApiGwV2(ctx context.Context, event events.APIGatewayV2HTTPRequest, adapter AdapterFunc) (events.APIGatewayV2HTTPResponse, error) {
+	req, err := convertApiGwV2Request(ctx, event)
+	if err != nil {
+		var def events.APIGatewayV2HTTPResponse
+		return def, err
 	}
 
-	return out, nil
+	w := apiGwV2ResponseWriter{
+		headers: make(http.Header),
+		res: events.APIGatewayV2HTTPResponse{
+			Headers: make(map[string]string),
+			Cookies: make([]string, 0),
+		},
+	}
+
+	if err = adapter(ctx, req, &w); err != nil {
+		var def events.APIGatewayV2HTTPResponse
+		return def, err
+	}
+
+	b := w.body.Bytes()
+
+	if !w.contentTypeSet {
+		w.res.Headers["Content-Type"] = http.DetectContentType(b)
+	}
+
+	if !w.contentLengthSet {
+		w.res.Headers["Content-Length"] = strconv.Itoa(len(b))
+	}
+
+	if utf8.Valid(b) {
+		w.res.Body = string(b)
+	} else {
+		w.res.IsBase64Encoded = true
+		w.res.Body = base64.StdEncoding.EncodeToString(b)
+	}
+
+	return w.res, nil
 }
 
 func NewAPIGatewayV2Handler(adapter AdapterFunc) func(context.Context, events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	return NewHandler(apiGwV2RequestConverter, apiGwV2ResponseInitializer, apiGwV2ResponseFinalizer, adapter)
+	return NewHandler(handleApiGwV2, adapter)
 }

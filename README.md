@@ -218,7 +218,7 @@ import (
 func main() {
 	adapter := [...] // see above
 	h := [...] // see above
-	h = WrapWithRecover(h, func(ctx context.Context, event events.APIGatewayV2HTTPRequest, panicValue any) (events.APIGatewayV2HTTPResponse, error) {
+	h = handler.WrapWithRecover(h, func(ctx context.Context, event events.APIGatewayV2HTTPRequest, panicValue any) (events.APIGatewayV2HTTPResponse, error) {
 		return events.APIGatewayV2HTTPResponse{
 			StatusCode:        500,
 			Headers:           make(map[string]string),
@@ -241,3 +241,17 @@ Have a look at the existing adapters:
 - [net/http](./adapter/vanilla/vanilla.go)
 - [Echo](./adapter/echo/echo.go)
 - [Fiber](./adapter/fiber/fiber.go)
+
+## Build Tags
+You can opt-in to enable partial build by using the build-tag `lambdahttpadapter.partial`.
+
+Once this build-tag is present, the following build-tags are available:
+- `lambdahttpadapter.vanilla` (enables the vanilla adapter)
+- `lambdahttpadapter.echo` (enables the echo adapter)
+- `lambdahttpadapter.fiber` (enables the fiber adapter)
+- `lambdahttpadapter.apigwv1` (enables API Gateway V1 handler)
+- `lambdahttpadapter.apigwv2` (enables API Gateway V2 handler)
+- `lambdahttpadapter.functionurl` (enables Lambda Function URL handler)
+
+Also note that Lambda Function URL in Streaming-Mode requires the following build-tag to be set:
+- `lambda.norpc`

@@ -1,3 +1,5 @@
+//go:build !lambdahttpadapter.partial || (lambdahttpadapter.partial && lambdahttpadapter.fiber)
+
 package fiber
 
 import (
@@ -63,6 +65,8 @@ func (a adapter) adapterFunc(ctx context.Context, r *http.Request, w http.Respon
 
 	var fctx fasthttp.RequestCtx
 	fctx.Init(httpReq, remoteAddr, nil)
+	defer fasthttp.ReleaseResponse(&fctx.Response)
+
 	fctx.SetUserValue(sourceEventUserValueKey, handler.GetSourceEvent(ctx))
 
 	a.app.Handler()(&fctx)
@@ -76,9 +80,10 @@ func (a adapter) adapterFunc(ctx context.Context, r *http.Request, w http.Respon
 	})
 
 	w.WriteHeader(fctx.Response.StatusCode())
-	_, _ = w.Write(fctx.Response.Body())
+	// release handled in defer
+	_, err = io.Copy(w, fctx.Response.BodyStream())
 
-	return nil
+	return err
 }
 
 func NewAdapter(delegate *fiber.App) handler.AdapterFunc {

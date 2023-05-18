@@ -1,15 +1,19 @@
+//go:build !lambdahttpadapter.partial || (lambdahttpadapter.partial && lambdahttpadapter.functionurl)
+
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"github.com/aws/aws-lambda-go/events"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
-func functionURLRequestConverter(ctx context.Context, event events.LambdaFunctionURLRequest) (*http.Request, error) {
+func convertFunctionURLRequest(ctx context.Context, event events.LambdaFunctionURLRequest) (*http.Request, error) {
 	url := buildFullRequestURL(event.RequestContext.DomainName, event.RawPath, event.RequestContext.HTTP.Path, buildQuery(event.RawQueryString, event.QueryStringParameters))
 	req, err := http.NewRequestWithContext(ctx, event.RequestContext.HTTP.Method, url, getBody(event.Body, event.IsBase64Encoded))
 	if err != nil {
@@ -40,75 +44,176 @@ func functionURLRequestConverter(ctx context.Context, event events.LambdaFunctio
 	return req, nil
 }
 
-func functionURLResponseInitializer(ctx context.Context) *ResponseWriterProxy {
-	return NewResponseWriterProxy()
+// region classic
+type functionURLResponseWriter struct {
+	headersWritten   bool
+	contentTypeSet   bool
+	contentLengthSet bool
+	headers          http.Header
+	body             bytes.Buffer
+	res              events.LambdaFunctionURLResponse
 }
 
-func functionURLResponseFinalizer(ctx context.Context, w *ResponseWriterProxy) (events.LambdaFunctionURLResponse, error) {
-	out := events.LambdaFunctionURLResponse{
-		StatusCode: w.Status,
-		Headers:    make(map[string]string),
-		Cookies:    make([]string, 0),
-	}
+func (w *functionURLResponseWriter) Header() http.Header {
+	return w.headers
+}
 
-	for k, values := range w.Headers {
-		if strings.EqualFold("set-cookie", k) {
-			out.Cookies = values
-		} else {
-			if len(values) == 0 {
-				out.Headers[k] = ""
-			} else if len(values) == 1 {
-				out.Headers[k] = values[0]
+func (w *functionURLResponseWriter) Write(p []byte) (int, error) {
+	w.WriteHeader(http.StatusOK)
+	return w.body.Write(p)
+}
+
+func (w *functionURLResponseWriter) WriteHeader(statusCode int) {
+	if !w.headersWritten {
+		w.headersWritten = true
+		w.res.StatusCode = statusCode
+
+		for k, values := range w.headers {
+			if strings.EqualFold("set-cookie", k) {
+				w.res.Cookies = values
 			} else {
-				out.Headers[k] = strings.Join(values, ",")
+				if len(values) == 0 {
+					w.res.Headers[k] = ""
+				} else if len(values) == 1 {
+					w.res.Headers[k] = values[0]
+				} else {
+					w.res.Headers[k] = strings.Join(values, ",")
+				}
+			}
+
+			if strings.EqualFold("content-type", k) {
+				w.contentTypeSet = true
+			} else if strings.EqualFold("content-length", k) {
+				w.contentLengthSet = true
 			}
 		}
 	}
+}
 
-	b := w.Body.Bytes()
+func handleFunctionURL(ctx context.Context, event events.LambdaFunctionURLRequest, adapter AdapterFunc) (events.LambdaFunctionURLResponse, error) {
+	req, err := convertFunctionURLRequest(ctx, event)
+	if err != nil {
+		var def events.LambdaFunctionURLResponse
+		return def, err
+	}
+
+	w := functionURLResponseWriter{
+		headers: make(http.Header),
+		res: events.LambdaFunctionURLResponse{
+			Headers: make(map[string]string),
+			Cookies: make([]string, 0),
+		},
+	}
+
+	if err = adapter(ctx, req, &w); err != nil {
+		var def events.LambdaFunctionURLResponse
+		return def, err
+	}
+
+	b := w.body.Bytes()
+
+	if !w.contentTypeSet {
+		w.res.Headers["Content-Type"] = http.DetectContentType(b)
+	}
+
+	if !w.contentLengthSet {
+		w.res.Headers["Content-Length"] = strconv.Itoa(len(b))
+	}
+
 	if utf8.Valid(b) {
-		out.Body = string(b)
+		w.res.Body = string(b)
 	} else {
-		out.IsBase64Encoded = true
-		out.Body = base64.StdEncoding.EncodeToString(b)
+		w.res.IsBase64Encoded = true
+		w.res.Body = base64.StdEncoding.EncodeToString(b)
 	}
 
-	return out, nil
-}
-
-func functionURLStreamingResponseInitializer(ctx context.Context) *ResponseWriterProxy {
-	return NewResponseWriterProxy()
-}
-
-func functionURLStreamingResponseFinalizer(ctx context.Context, w *ResponseWriterProxy) (*events.LambdaFunctionURLStreamingResponse, error) {
-	out := events.LambdaFunctionURLStreamingResponse{
-		StatusCode: w.Status,
-		Headers:    make(map[string]string),
-		Cookies:    make([]string, 0),
-		Body:       &w.Body,
-	}
-
-	for k, values := range w.Headers {
-		if strings.EqualFold("set-cookie", k) {
-			out.Cookies = values
-		} else {
-			if len(values) == 0 {
-				out.Headers[k] = ""
-			} else if len(values) == 1 {
-				out.Headers[k] = values[0]
-			} else {
-				out.Headers[k] = strings.Join(values, ",")
-			}
-		}
-	}
-
-	return &out, nil
+	return w.res, nil
 }
 
 func NewFunctionURLHandler(adapter AdapterFunc) func(context.Context, events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
-	return NewHandler(functionURLRequestConverter, functionURLResponseInitializer, functionURLResponseFinalizer, adapter)
+	return NewHandler(handleFunctionURL, adapter)
+}
+
+// endregion
+
+// region streaming
+type functionURLStreamingResponseWriter struct {
+	headers http.Header
+	body    bytes.Buffer
+	res     *events.LambdaFunctionURLStreamingResponse
+	resCh   chan<- *events.LambdaFunctionURLStreamingResponse
+}
+
+func (w *functionURLStreamingResponseWriter) Header() http.Header {
+	return w.headers
+}
+
+func (w *functionURLStreamingResponseWriter) Write(p []byte) (int, error) {
+	w.WriteHeader(http.StatusOK)
+	return w.body.Write(p)
+}
+
+func (w *functionURLStreamingResponseWriter) WriteHeader(statusCode int) {
+	if w.res == nil {
+		w.res = &events.LambdaFunctionURLStreamingResponse{
+			StatusCode: statusCode,
+			Headers:    make(map[string]string),
+			Body:       &w.body,
+			Cookies:    make([]string, 0),
+		}
+
+		for k, values := range w.headers {
+			if strings.EqualFold("set-cookie", k) {
+				w.res.Cookies = values
+			} else {
+				if len(values) == 0 {
+					w.res.Headers[k] = ""
+				} else if len(values) == 1 {
+					w.res.Headers[k] = values[0]
+				} else {
+					w.res.Headers[k] = strings.Join(values, ",")
+				}
+			}
+		}
+
+		w.resCh <- w.res
+		close(w.resCh)
+	}
+}
+
+func handleFunctionURLStreaming(ctx context.Context, event events.LambdaFunctionURLRequest, adapter AdapterFunc) (*events.LambdaFunctionURLStreamingResponse, error) {
+	req, err := convertFunctionURLRequest(ctx, event)
+	if err != nil {
+		return nil, err
+	}
+
+	resCh := make(chan *events.LambdaFunctionURLStreamingResponse)
+	errCh := make(chan error)
+	w := functionURLStreamingResponseWriter{
+		headers: make(http.Header),
+		resCh:   resCh,
+	}
+
+	go func() {
+		if err := adapter(ctx, req, &w); err != nil {
+			errCh <- err
+		}
+
+		close(errCh)
+	}()
+
+	select {
+	case res := <-resCh:
+		return res, nil
+	case err = <-errCh:
+		return nil, err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func NewFunctionURLStreamingHandler(adapter AdapterFunc) func(context.Context, events.LambdaFunctionURLRequest) (*events.LambdaFunctionURLStreamingResponse, error) {
-	return NewHandler(functionURLRequestConverter, functionURLStreamingResponseInitializer, functionURLStreamingResponseFinalizer, adapter)
+	return NewHandler(handleFunctionURLStreaming, adapter)
 }
+
+// endregion
