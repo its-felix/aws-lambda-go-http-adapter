@@ -1,6 +1,6 @@
 //go:build !lambdahttpadapter.partial || (lambdahttpadapter.partial && lambdahttpadapter.echo)
 
-package echo
+package adapter
 
 import (
 	"context"
@@ -9,15 +9,15 @@ import (
 	"net/http"
 )
 
-type adapter struct {
+type echoAdapter struct {
 	echo *echo.Echo
 }
 
-func (a adapter) adapterFunc(ctx context.Context, r *http.Request, w http.ResponseWriter) error {
+func (a echoAdapter) adapterFunc(ctx context.Context, r *http.Request, w http.ResponseWriter) error {
 	a.echo.ServeHTTP(w, r)
 	return nil
 }
 
-func NewAdapter(delegate *echo.Echo) handler.AdapterFunc {
-	return adapter{delegate}.adapterFunc
+func NewEchoAdapter(delegate *echo.Echo) handler.AdapterFunc {
+	return echoAdapter{delegate}.adapterFunc
 }

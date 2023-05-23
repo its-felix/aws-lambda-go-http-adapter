@@ -1,6 +1,6 @@
 //go:build !lambdahttpadapter.partial || (lambdahttpadapter.partial && lambdahttpadapter.fiber)
 
-package fiber
+package adapter
 
 import (
 	"context"
@@ -14,13 +14,14 @@ import (
 	"strings"
 )
 
-const sourceEventUserValueKey = "github.com/its-felix/aws-lambda-go-adapter-fiber::sourceEvent"
+const contextUserValueKey = "github.com/its-felix/aws-lambda-go-http-adapter/adapter/fiber::contextUserValueKey"
 
-type adapter struct {
-	app *fiber.App
+type fiberAdapter struct {
+	app     *fiber.App
+	handler fasthttp.RequestHandler
 }
 
-func (a adapter) adapterFunc(ctx context.Context, r *http.Request, w http.ResponseWriter) error {
+func (a fiberAdapter) adapterFunc(ctx context.Context, r *http.Request, w http.ResponseWriter) error {
 	httpReq := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(httpReq)
 
@@ -67,9 +68,9 @@ func (a adapter) adapterFunc(ctx context.Context, r *http.Request, w http.Respon
 	fctx.Init(httpReq, remoteAddr, nil)
 	defer fasthttp.ReleaseResponse(&fctx.Response)
 
-	fctx.SetUserValue(sourceEventUserValueKey, handler.GetSourceEvent(ctx))
+	fctx.SetUserValue(contextUserValueKey, ctx)
 
-	a.app.Handler()(&fctx)
+	a.handler(&fctx)
 
 	fctx.Response.Header.VisitAll(func(key, value []byte) {
 		k := utils.UnsafeString(key)
@@ -86,10 +87,14 @@ func (a adapter) adapterFunc(ctx context.Context, r *http.Request, w http.Respon
 	return err
 }
 
-func NewAdapter(delegate *fiber.App) handler.AdapterFunc {
-	return adapter{delegate}.adapterFunc
+func NewFiberAdapter(delegate *fiber.App) handler.AdapterFunc {
+	return fiberAdapter{delegate, delegate.Handler()}.adapterFunc
 }
 
-func GetSourceEvent(ctx *fiber.Ctx) any {
-	return ctx.Context().UserValue(sourceEventUserValueKey)
+func GetContextFiber(ctx *fiber.Ctx) context.Context {
+	return ctx.Context().Value(contextUserValueKey).(context.Context)
+}
+
+func GetSourceEventFiber(ctx *fiber.Ctx) any {
+	return handler.GetSourceEvent(GetContextFiber(ctx))
 }
