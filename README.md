@@ -21,7 +21,7 @@ Simple HTTP adapter for AWS Lambda
 package main
 
 import (
-	"github.com/its-felix/aws-lambda-go-http-adapter/adapter/vanilla"
+	"github.com/its-felix/aws-lambda-go-http-adapter/adapter"
 	"net/http"
 )
 
@@ -32,7 +32,7 @@ func main() {
 		_, _ = w.Write([]byte("pong"))
 	})
 	
-	adapter := vanilla.NewAdapter(mux)
+	adapter := adapter.NewVanillaAdapter(mux)
 }
 ```
 
@@ -42,7 +42,7 @@ package main
 
 import (
 	"github.com/labstack/echo/v4"
-	echoadapter "github.com/its-felix/aws-lambda-go-http-adapter/adapter/echo"
+	"github.com/its-felix/aws-lambda-go-http-adapter/adapter"
 	"net/http"
 )
 
@@ -52,7 +52,7 @@ func main() {
 		return c.String(200, "pong")
 	})
 	
-	adapter := echoadapter.NewAdapter(e)
+	adapter := adapter.NewEchoAdapter(e)
 }
 ```
 
@@ -62,8 +62,7 @@ package main
 
 import (
 	"github.com/gofiber/fiber/v2"
-	fiberadapter "github.com/its-felix/aws-lambda-go-http-adapter/adapter/fiber"
-	"net/http"
+	"github.com/its-felix/aws-lambda-go-http-adapter/adapter"
 )
 
 func main() {
@@ -72,7 +71,7 @@ func main() {
 		return ctx.SendString("pong")
 	})
 
-	adapter := fiberadapter.NewAdapter(app)
+	adapter := adapter.NewFiberAdapter(app)
 }
 ```
 
@@ -129,6 +128,7 @@ func main() {
 ```
 
 #### Lambda Function URL (streaming)
+(read the additional notes about streaming below)
 ```golang
 package main
 
@@ -153,13 +153,13 @@ package main
 import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/gofiber/fiber/v2"
-	fiberadapter "github.com/its-felix/aws-lambda-go-http-adapter/adapter/fiber"
+	"github.com/its-felix/aws-lambda-go-http-adapter/adapter"
 )
 
 func main() {
 	app := fiber.New()
 	app.Get("/ping", func(ctx *fiber.Ctx) error {
-		event := fiberadapter.GetSourceEvent(ctx)
+		event := adapter.GetSourceEventFiber(ctx)
 		switch event := event.(type) {
 		case events.APIGatewayProxyRequest:
 			// do something
@@ -238,9 +238,9 @@ Have a look at the existing event handlers:
 
 ## Extending for other frameworks
 Have a look at the existing adapters:
-- [net/http](./adapter/vanilla/vanilla.go)
-- [Echo](./adapter/echo/echo.go)
-- [Fiber](./adapter/fiber/fiber.go)
+- [net/http](./adapter/vanilla.go)
+- [Echo](./adapter/echo.go)
+- [Fiber](./adapter/fiber.go)
 
 ## Build Tags
 You can opt-in to enable partial build by using the build-tag `lambdahttpadapter.partial`.
@@ -255,3 +255,9 @@ Once this build-tag is present, the following build-tags are available:
 
 Also note that Lambda Function URL in Streaming-Mode requires the following build-tag to be set:
 - `lambda.norpc`
+
+## Note about Lambda streaming
+Response streaming is currently not supported for the fiber adapter.
+The code will work, but the response body will only be sent downstream as soon as the request was processed completely.
+
+This is because there seems to be no way in `fasthttp` to provide a `io.Writer` to be populated while the request is being processed.
