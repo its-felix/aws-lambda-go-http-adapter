@@ -7,7 +7,7 @@ import (
 
 type httpContextKey string
 
-var sourceEventContextKey httpContextKey = "github.com/its-felix/aws-lambda-go-http-adapter/api::sourceEventContextKey"
+var sourceEventContextKey httpContextKey = "github.com/its-felix/aws-lambda-go-http-adapter/handler/api::sourceEventContextKey"
 
 type AdapterFunc func(ctx context.Context, r *http.Request, w http.ResponseWriter) error
 type HandlerFunc[In any, Out any] func(ctx context.Context, event In, adapter AdapterFunc) (Out, error)
