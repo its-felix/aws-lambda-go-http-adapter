@@ -200,21 +200,7 @@ func handleFunctionURLStreaming(ctx context.Context, event events.LambdaFunction
 	resCh := make(chan *events.LambdaFunctionURLStreamingResponse)
 	errCh := make(chan error)
 
-	go func(resCh chan<- *events.LambdaFunctionURLStreamingResponse, errCh chan<- error) {
-		defer close(resCh)
-		defer close(errCh)
-
-		w := functionURLStreamingResponseWriter{
-			headers: make(http.Header),
-			resCh:   resCh,
-		}
-
-		defer w.Close()
-
-		if err := adapter(ctx, req, &w); err != nil {
-			errCh <- err
-		}
-	}(resCh, errCh)
+	go processRequestFunctionURLStreaming(ctx, req, adapter, resCh, errCh)
 
 	select {
 	case res := <-resCh:
@@ -223,6 +209,25 @@ func handleFunctionURLStreaming(ctx context.Context, event events.LambdaFunction
 		return nil, err
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+func processRequestFunctionURLStreaming(ctx context.Context, req *http.Request, adapter AdapterFunc, resCh chan<- *events.LambdaFunctionURLStreamingResponse, errCh chan<- error) {
+	defer close(resCh)
+	defer close(errCh)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	w := functionURLStreamingResponseWriter{
+		headers: make(http.Header),
+		resCh:   resCh,
+	}
+
+	defer w.Close()
+
+	if err := adapter(ctx, req, &w); err != nil {
+		errCh <- err
 	}
 }
 
