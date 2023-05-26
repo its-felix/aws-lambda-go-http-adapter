@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/gofiber/fiber/v2"
 	"github.com/its-felix/aws-lambda-go-http-adapter/adapter"
@@ -67,6 +68,15 @@ func newVanillaAdapter() handler.AdapterFunc {
 	return adapter.NewVanillaAdapter(mux)
 }
 
+func newVanillaPanicAdapter() handler.AdapterFunc {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		panic("panic from test")
+	})
+
+	return adapter.NewVanillaAdapter(mux)
+}
+
 func newEchoAdapter() handler.AdapterFunc {
 	app := echo.New()
 	app.Any("*", func(c echo.Context) error {
@@ -89,6 +99,15 @@ func newEchoAdapter() handler.AdapterFunc {
 	return adapter.NewEchoAdapter(app)
 }
 
+func newEchoPanicAdapter() handler.AdapterFunc {
+	app := echo.New()
+	app.Any("*", func(c echo.Context) error {
+		panic("panic from test")
+	})
+
+	return adapter.NewEchoAdapter(app)
+}
+
 func newFiberAdapter() handler.AdapterFunc {
 	app := fiber.New()
 	app.All("*", func(ctx *fiber.Ctx) error {
@@ -104,7 +123,66 @@ func newFiberAdapter() handler.AdapterFunc {
 	return adapter.NewFiberAdapter(app)
 }
 
-func TestFunctionURLGET(t *testing.T) {
+func newFiberPanicAdapter() handler.AdapterFunc {
+	app := fiber.New()
+	app.All("*", func(ctx *fiber.Ctx) error {
+		panic("panic from test")
+	})
+
+	return adapter.NewFiberAdapter(app)
+}
+
+type extractor[T any] interface {
+	StatusCode(T) int
+	Headers(T) map[string]string
+	IsBase64Encoded(T) bool
+	Body(T) string
+}
+
+type extractorNormal struct{}
+
+func (extractorNormal) StatusCode(response events.LambdaFunctionURLResponse) int {
+	return response.StatusCode
+}
+
+func (extractorNormal) Headers(response events.LambdaFunctionURLResponse) map[string]string {
+	return response.Headers
+}
+
+func (extractorNormal) IsBase64Encoded(response events.LambdaFunctionURLResponse) bool {
+	return response.IsBase64Encoded
+}
+
+func (extractorNormal) Body(response events.LambdaFunctionURLResponse) string {
+	return response.Body
+}
+
+type extractorStreaming struct{}
+
+func (extractorStreaming) StatusCode(response *events.LambdaFunctionURLStreamingResponse) int {
+	return response.StatusCode
+}
+
+func (extractorStreaming) Headers(response *events.LambdaFunctionURLStreamingResponse) map[string]string {
+	return response.Headers
+}
+
+func (extractorStreaming) IsBase64Encoded(*events.LambdaFunctionURLStreamingResponse) bool {
+	return false
+}
+
+func (extractorStreaming) Body(response *events.LambdaFunctionURLStreamingResponse) string {
+	defer func() {
+		if rc, ok := response.Body.(io.Closer); ok {
+			_ = rc.Close()
+		}
+	}()
+
+	b, _ := io.ReadAll(response.Body)
+	return string(b)
+}
+
+func TestFunctionURLPOST(t *testing.T) {
 	adapters := map[string]handler.AdapterFunc{
 		"vanilla": newVanillaAdapter(),
 		"echo":    newEchoAdapter(),
@@ -113,41 +191,93 @@ func TestFunctionURLGET(t *testing.T) {
 
 	for name, a := range adapters {
 		t.Run(name, func(t *testing.T) {
-			h := handler.NewFunctionURLHandler(a)
+			t.Run("normal", func(t *testing.T) {
+				h := handler.NewFunctionURLHandler(a)
+				runTestFunctionURLPOST[events.LambdaFunctionURLResponse](t, h, extractorNormal{})
+			})
 
-			req := newFunctionURLRequest()
-			res, err := h(context.Background(), req)
-			if err != nil {
-				t.Error(err)
-			}
-
-			if res.StatusCode != http.StatusOK {
-				t.Error("expected status to be 200")
-			}
-
-			if res.Headers["Content-Type"] != "application/json" {
-				t.Error("expected Content-Type to be application/json")
-			}
-
-			if res.IsBase64Encoded {
-				t.Error("expected body not to be base64 encoded")
-			}
-
-			body := make(map[string]string)
-			_ = json.Unmarshal([]byte(res.Body), &body)
-
-			expectedBody := map[string]string{
-				"Method":     "POST",
-				"URL":        "https://0dhg9709da0dhg9709da0dhg9709da.lambda-url.eu-central-1.on.aws/example?key=value",
-				"RemoteAddr": "127.0.0.1:http",
-				"Body":       "hello world",
-			}
-
-			if !reflect.DeepEqual(body, expectedBody) {
-				t.Logf("expected: %v", expectedBody)
-				t.Logf("actual: %v", body)
-				t.Error("request/response didnt match")
-			}
+			t.Run("streaming", func(t *testing.T) {
+				h := handler.NewFunctionURLStreamingHandler(a)
+				runTestFunctionURLPOST[*events.LambdaFunctionURLStreamingResponse](t, h, extractorStreaming{})
+			})
 		})
+	}
+}
+
+func runTestFunctionURLPOST[T any](t *testing.T, h func(context.Context, events.LambdaFunctionURLRequest) (T, error), ex extractor[T]) {
+	req := newFunctionURLRequest()
+	res, err := h(context.Background(), req)
+	if err != nil {
+		t.Error(err)
+	}
+
+	if ex.StatusCode(res) != http.StatusOK {
+		t.Error("expected status to be 200")
+	}
+
+	if ex.Headers(res)["Content-Type"] != "application/json" {
+		t.Error("expected Content-Type to be application/json")
+	}
+
+	if ex.IsBase64Encoded(res) {
+		t.Error("expected body not to be base64 encoded")
+	}
+
+	body := make(map[string]string)
+	_ = json.Unmarshal([]byte(ex.Body(res)), &body)
+
+	expectedBody := map[string]string{
+		"Method":     "POST",
+		"URL":        "https://0dhg9709da0dhg9709da0dhg9709da.lambda-url.eu-central-1.on.aws/example?key=value",
+		"RemoteAddr": "127.0.0.1:http",
+		"Body":       "hello world",
+	}
+
+	if !reflect.DeepEqual(body, expectedBody) {
+		t.Logf("expected: %v", expectedBody)
+		t.Logf("actual: %v", body)
+		t.Error("request/response didnt match")
+	}
+}
+
+func TestFunctionURLWithPanicAndRecover(t *testing.T) {
+	adapters := map[string]handler.AdapterFunc{
+		"vanilla": newVanillaPanicAdapter(),
+		"echo":    newEchoPanicAdapter(),
+		"fiber":   newFiberPanicAdapter(),
+	}
+
+	for name, a := range adapters {
+		t.Run(name, func(t *testing.T) {
+			t.Run("normal", func(t *testing.T) {
+				h := handler.NewFunctionURLHandler(a)
+				h = handler.WrapWithRecover(h, func(ctx context.Context, event events.LambdaFunctionURLRequest, panicValue any) (events.LambdaFunctionURLResponse, error) {
+					return events.LambdaFunctionURLResponse{}, errors.New(panicValue.(string))
+				})
+
+				runTestFunctionURLPanicAndRecover(t, h)
+			})
+
+			t.Run("streaming", func(t *testing.T) {
+				h := handler.NewFunctionURLStreamingHandler(a)
+				h = handler.WrapWithRecover(h, func(ctx context.Context, event events.LambdaFunctionURLRequest, panicValue any) (*events.LambdaFunctionURLStreamingResponse, error) {
+					return nil, errors.New(panicValue.(string))
+				})
+
+				runTestFunctionURLPanicAndRecover(t, h)
+			})
+		})
+	}
+}
+
+func runTestFunctionURLPanicAndRecover[T any](t *testing.T, h func(context.Context, events.LambdaFunctionURLRequest) (T, error)) {
+	req := newFunctionURLRequest()
+	_, err := h(context.Background(), req)
+	if err == nil {
+		t.Error("expected to receive an error")
+	}
+
+	if err.Error() != "panic from test" {
+		t.Error("expected to receive error 'panic from test'")
 	}
 }
