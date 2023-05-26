@@ -28,7 +28,7 @@ func (a fiberAdapter) adapterFunc(ctx context.Context, r *http.Request, w http.R
 	// protocol, method, uri, host
 	httpReq.Header.SetProtocol(r.Proto)
 	httpReq.Header.SetMethod(r.Method)
-	httpReq.SetRequestURI(r.RequestURI)
+	httpReq.SetRequestURI(r.URL.Scheme + "://" + r.RequestURI)
 	httpReq.SetHost(r.Host)
 
 	// body
@@ -82,7 +82,7 @@ func (a fiberAdapter) adapterFunc(ctx context.Context, r *http.Request, w http.R
 
 	w.WriteHeader(fctx.Response.StatusCode())
 	// release handled in defer
-	_, err = io.Copy(w, fctx.Response.BodyStream())
+	err = fctx.Response.BodyWriteTo(w)
 
 	return err
 }

@@ -29,13 +29,13 @@ func newFunctionURLRequest() events.LambdaFunctionURLRequest {
 			Authorizer:   nil,
 			APIID:        "0dhg9709da0dhg9709da0dhg9709da",
 			DomainName:   "0dhg9709da0dhg9709da0dhg9709da.lambda-url.eu-central-1.on.aws",
-			DomainPrefix: "",
+			DomainPrefix: "0dhg9709da0dhg9709da0dhg9709da",
 			Time:         "",
 			TimeEpoch:    0,
 			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{
 				Method:    "POST",
 				Path:      "/example",
-				Protocol:  "",
+				Protocol:  "HTTP/1.1",
 				SourceIP:  "127.0.0.1",
 				UserAgent: "Go-http-client/1.1",
 			},
@@ -95,7 +95,7 @@ func newFiberAdapter() handler.AdapterFunc {
 		result := make(map[string]string)
 		result["Method"] = ctx.Method()
 		result["URL"] = ctx.Request().URI().String()
-		result["RemoteAddr"] = ctx.IP()
+		result["RemoteAddr"] = ctx.IP() + ":http" // fiber uses net.ResolveTCPAddr which resolves :http to :80
 		result["Body"] = string(ctx.Body())
 
 		return ctx.JSON(result)
@@ -108,6 +108,7 @@ func TestFunctionURLGET(t *testing.T) {
 	adapters := map[string]handler.AdapterFunc{
 		"vanilla": newVanillaAdapter(),
 		"echo":    newEchoAdapter(),
+		"fiber":   newFiberAdapter(),
 	}
 
 	for name, a := range adapters {
@@ -143,6 +144,8 @@ func TestFunctionURLGET(t *testing.T) {
 			}
 
 			if !reflect.DeepEqual(body, expectedBody) {
+				t.Logf("expected: %v", expectedBody)
+				t.Logf("actual: %v", body)
 				t.Error("request/response didnt match")
 			}
 		})
