@@ -13,7 +13,9 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func newFunctionURLRequest() events.LambdaFunctionURLRequest {
@@ -77,6 +79,21 @@ func newVanillaPanicAdapter() handler.AdapterFunc {
 	return adapter.NewVanillaAdapter(mux)
 }
 
+func newVanillaDelayedAdapter() handler.AdapterFunc {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+
+		for i := 0; i < 10; i++ {
+			_, _ = w.Write([]byte("pong"))
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+
+	return adapter.NewVanillaAdapter(mux)
+}
+
 func newEchoAdapter() handler.AdapterFunc {
 	app := echo.New()
 	app.Any("*", func(c echo.Context) error {
@@ -108,6 +125,25 @@ func newEchoPanicAdapter() handler.AdapterFunc {
 	return adapter.NewEchoAdapter(app)
 }
 
+func newEchoDelayedAdapter() handler.AdapterFunc {
+	app := echo.New()
+	app.Any("*", func(c echo.Context) error {
+		w := c.Response()
+
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+
+		for i := 0; i < 10; i++ {
+			_, _ = w.Write([]byte("pong"))
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		return nil
+	})
+
+	return adapter.NewEchoAdapter(app)
+}
+
 func newFiberAdapter() handler.AdapterFunc {
 	app := fiber.New()
 	app.All("*", func(ctx *fiber.Ctx) error {
@@ -127,6 +163,27 @@ func newFiberPanicAdapter() handler.AdapterFunc {
 	app := fiber.New()
 	app.All("*", func(ctx *fiber.Ctx) error {
 		panic("panic from test")
+	})
+
+	return adapter.NewFiberAdapter(app)
+}
+
+func newFiberDelayedAdapter() handler.AdapterFunc {
+	app := fiber.New()
+	app.All("*", func(ctx *fiber.Ctx) error {
+		w := ctx.Response()
+
+		w.Header.Set("Content-Type", "text/plain")
+		w.Header.SetStatusCode(http.StatusOK)
+
+		bw := w.BodyWriter()
+
+		for i := 0; i < 10; i++ {
+			_, _ = bw.Write([]byte("pong"))
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		return nil
 	})
 
 	return adapter.NewFiberAdapter(app)
@@ -279,5 +336,56 @@ func runTestFunctionURLPanicAndRecover[T any](t *testing.T, h func(context.Conte
 
 	if err.Error() != "panic from test" {
 		t.Error("expected to receive error 'panic from test'")
+	}
+}
+
+func TestFunctionURLDelayed(t *testing.T) {
+	adapters := map[string]handler.AdapterFunc{
+		"vanilla": newVanillaDelayedAdapter(),
+		"echo":    newEchoDelayedAdapter(),
+		"fiber":   newFiberDelayedAdapter(),
+	}
+
+	for name, a := range adapters {
+		t.Run(name, func(t *testing.T) {
+			t.Run("normal", func(t *testing.T) {
+				h := handler.NewFunctionURLHandler(a)
+				runTestFunctionURLDelayed[events.LambdaFunctionURLResponse](t, h, extractorNormal{})
+			})
+
+			t.Run("streaming", func(t *testing.T) {
+				h := handler.NewFunctionURLStreamingHandler(a)
+				runTestFunctionURLDelayed[*events.LambdaFunctionURLStreamingResponse](t, h, extractorStreaming{})
+			})
+		})
+	}
+}
+
+func runTestFunctionURLDelayed[T any](t *testing.T, h func(context.Context, events.LambdaFunctionURLRequest) (T, error), ex extractor[T]) {
+	req := newFunctionURLRequest()
+	res, err := h(context.Background(), req)
+	if err != nil {
+		t.Error(err)
+	}
+
+	if ex.StatusCode(res) != http.StatusOK {
+		t.Error("expected status to be 200")
+	}
+
+	if ex.Headers(res)["Content-Type"] != "text/plain" {
+		t.Error("expected Content-Type to be text/plain")
+	}
+
+	if ex.IsBase64Encoded(res) {
+		t.Error("expected body not to be base64 encoded")
+	}
+
+	body := ex.Body(res)
+	expectedBody := strings.Repeat("pong", 10)
+
+	if body != expectedBody {
+		t.Logf("expected: %v", expectedBody)
+		t.Logf("actual: %v", body)
+		t.Error("request/response didnt match")
 	}
 }
