@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"unicode/utf8"
 )
 
@@ -111,7 +112,11 @@ func handleFunctionURL(ctx context.Context, event events.LambdaFunctionURLReques
 		return def, err
 	}
 
-	b := w.body.Bytes()
+	b, err := io.ReadAll(&w.body)
+	if err != nil {
+		var def events.LambdaFunctionURLResponse
+		return def, err
+	}
 
 	if !w.contentTypeSet {
 		w.res.Headers["Content-Type"] = http.DetectContentType(b)
@@ -139,10 +144,10 @@ func NewFunctionURLHandler(adapter AdapterFunc) func(context.Context, events.Lam
 
 // region streaming
 type functionURLStreamingResponseWriter struct {
-	headers http.Header
-	body    io.WriteCloser
-	res     *events.LambdaFunctionURLStreamingResponse
-	resCh   chan<- *events.LambdaFunctionURLStreamingResponse
+	headers        http.Header
+	headersWritten int32
+	body           io.WriteCloser
+	resCh          chan<- events.LambdaFunctionURLStreamingResponse
 }
 
 func (w *functionURLStreamingResponseWriter) Header() http.Header {
@@ -155,31 +160,33 @@ func (w *functionURLStreamingResponseWriter) Write(p []byte) (int, error) {
 }
 
 func (w *functionURLStreamingResponseWriter) WriteHeader(statusCode int) {
-	if w.res == nil {
+	if atomic.CompareAndSwapInt32(&w.headersWritten, 0, 1) {
 		pr, pw := io.Pipe()
 		w.body = pw
-		w.res = &events.LambdaFunctionURLStreamingResponse{
-			StatusCode: statusCode,
-			Headers:    make(map[string]string),
-			Body:       pr,
-			Cookies:    make([]string, 0),
-		}
+
+		headers := make(map[string]string)
+		cookies := make([]string, 0)
 
 		for k, values := range w.headers {
 			if strings.EqualFold("set-cookie", k) {
-				w.res.Cookies = values
+				cookies = values
 			} else {
 				if len(values) == 0 {
-					w.res.Headers[k] = ""
+					headers[k] = ""
 				} else if len(values) == 1 {
-					w.res.Headers[k] = values[0]
+					headers[k] = values[0]
 				} else {
-					w.res.Headers[k] = strings.Join(values, ",")
+					headers[k] = strings.Join(values, ",")
 				}
 			}
 		}
 
-		w.resCh <- w.res
+		w.resCh <- events.LambdaFunctionURLStreamingResponse{
+			StatusCode: statusCode,
+			Headers:    headers,
+			Body:       pr,
+			Cookies:    cookies,
+		}
 	}
 }
 
@@ -197,7 +204,7 @@ func handleFunctionURLStreaming(ctx context.Context, event events.LambdaFunction
 		return nil, err
 	}
 
-	resCh := make(chan *events.LambdaFunctionURLStreamingResponse)
+	resCh := make(chan events.LambdaFunctionURLStreamingResponse)
 	errCh := make(chan error)
 	panicCh := make(chan any)
 
@@ -205,7 +212,7 @@ func handleFunctionURLStreaming(ctx context.Context, event events.LambdaFunction
 
 	select {
 	case res := <-resCh:
-		return res, nil
+		return &res, nil
 	case err = <-errCh:
 		return nil, err
 	case panicV := <-panicCh:
@@ -215,7 +222,7 @@ func handleFunctionURLStreaming(ctx context.Context, event events.LambdaFunction
 	}
 }
 
-func processRequestFunctionURLStreaming(ctx context.Context, req *http.Request, adapter AdapterFunc, resCh chan<- *events.LambdaFunctionURLStreamingResponse, errCh chan<- error, panicCh chan<- any) {
+func processRequestFunctionURLStreaming(ctx context.Context, req *http.Request, adapter AdapterFunc, resCh chan<- events.LambdaFunctionURLStreamingResponse, errCh chan<- error, panicCh chan<- any) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer func() {
 		if panicV := recover(); panicV != nil {
@@ -229,8 +236,9 @@ func processRequestFunctionURLStreaming(ctx context.Context, req *http.Request, 
 	}()
 
 	w := functionURLStreamingResponseWriter{
-		headers: make(http.Header),
-		resCh:   resCh,
+		headers:        make(http.Header),
+		headersWritten: 0,
+		resCh:          resCh,
 	}
 
 	defer w.Close()
