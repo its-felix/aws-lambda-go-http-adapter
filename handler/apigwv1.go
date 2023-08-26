@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"github.com/aws/aws-lambda-go/events"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -116,7 +117,11 @@ func handleApiGwV1(ctx context.Context, event events.APIGatewayProxyRequest, ada
 		return def, err
 	}
 
-	b := w.body.Bytes()
+	b, err := io.ReadAll(&w.body)
+	if err != nil {
+		var def events.APIGatewayProxyResponse
+		return def, err
+	}
 
 	if !w.contentTypeSet {
 		w.res.Headers["Content-Type"] = http.DetectContentType(b)
