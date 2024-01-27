@@ -27,10 +27,8 @@ func convertApiGwV2Request(ctx context.Context, event events.APIGatewayV2HTTPReq
 		}
 	}
 
-	for k, valuesRaw := range event.Headers {
-		for _, v := range strings.Split(valuesRaw, ",") {
-			req.Header.Add(k, v)
-		}
+	for k, v := range event.Headers {
+		req.Header.Add(k, v)
 	}
 
 	req.Proto = event.RequestContext.HTTP.Protocol
