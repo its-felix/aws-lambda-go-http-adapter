@@ -38,7 +38,7 @@ func convertFunctionURLRequest(ctx context.Context, event events.LambdaFunctionU
 		req.ProtoMajor, req.ProtoMinor = pMajor, pMinor
 	}
 
-	req.RemoteAddr = event.RequestContext.HTTP.SourceIP + ":http"
+	req.RemoteAddr = buildRemoteAddr(event.RequestContext.HTTP.SourceIP)
 	req.RequestURI = req.URL.RequestURI()
 
 	return req, nil

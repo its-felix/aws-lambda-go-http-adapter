@@ -11,6 +11,7 @@ import (
 	"github.com/its-felix/aws-lambda-go-http-adapter/handler"
 	"github.com/labstack/echo/v4"
 	"io"
+	"net"
 	"net/http"
 	"reflect"
 	"strings"
@@ -18,7 +19,7 @@ import (
 	"time"
 )
 
-func newFunctionURLRequest() events.LambdaFunctionURLRequest {
+func newFunctionURLRequest(sourceIp string) events.LambdaFunctionURLRequest {
 	return events.LambdaFunctionURLRequest{
 		Version:               "2.0",
 		RawPath:               "/example",
@@ -39,7 +40,7 @@ func newFunctionURLRequest() events.LambdaFunctionURLRequest {
 				Method:    "POST",
 				Path:      "/example",
 				Protocol:  "HTTP/1.1",
-				SourceIP:  "127.0.0.1",
+				SourceIP:  sourceIp,
 				UserAgent: "Go-http-client/1.1",
 			},
 		},
@@ -150,7 +151,7 @@ func newFiberAdapter() handler.AdapterFunc {
 		result := make(map[string]string)
 		result["Method"] = ctx.Method()
 		result["URL"] = ctx.Request().URI().String()
-		result["RemoteAddr"] = ctx.IP() + ":http" // fiber uses net.ResolveTCPAddr which resolves :http to :80
+		result["RemoteAddr"] = net.JoinHostPort(ctx.IP(), "http") // fiber uses net.ResolveTCPAddr which resolves :http to :80
 		result["Body"] = string(ctx.Body())
 
 		return ctx.JSON(result)
@@ -262,38 +263,47 @@ func TestFunctionURLPOST(t *testing.T) {
 }
 
 func runTestFunctionURLPOST[T any](t *testing.T, h func(context.Context, events.LambdaFunctionURLRequest) (T, error), ex extractor[T]) {
-	req := newFunctionURLRequest()
-	res, err := h(context.Background(), req)
-	if err != nil {
-		t.Error(err)
+	sourceIps := map[string][2]string{
+		"ipv4": {"127.0.0.1", "127.0.0.1:http"},
+		"ipv6": {"::1", "[::1]:http"},
 	}
 
-	if ex.StatusCode(res) != http.StatusOK {
-		t.Error("expected status to be 200")
-	}
+	for name, inputPair := range sourceIps {
+		t.Run(name, func(t *testing.T) {
+			req := newFunctionURLRequest(inputPair[0])
+			res, err := h(context.Background(), req)
+			if err != nil {
+				t.Error(err)
+			}
 
-	if ex.Headers(res)["Content-Type"] != "application/json" {
-		t.Error("expected Content-Type to be application/json")
-	}
+			if ex.StatusCode(res) != http.StatusOK {
+				t.Error("expected status to be 200")
+			}
 
-	if ex.IsBase64Encoded(res) {
-		t.Error("expected body not to be base64 encoded")
-	}
+			if ex.Headers(res)["Content-Type"] != "application/json" {
+				t.Error("expected Content-Type to be application/json")
+			}
 
-	body := make(map[string]string)
-	_ = json.Unmarshal([]byte(ex.Body(res)), &body)
+			if ex.IsBase64Encoded(res) {
+				t.Error("expected body not to be base64 encoded")
+			}
 
-	expectedBody := map[string]string{
-		"Method":     "POST",
-		"URL":        "https://0dhg9709da0dhg9709da0dhg9709da.lambda-url.eu-central-1.on.aws/example?key=value",
-		"RemoteAddr": "127.0.0.1:http",
-		"Body":       "hello world",
-	}
+			body := make(map[string]string)
+			_ = json.Unmarshal([]byte(ex.Body(res)), &body)
 
-	if !reflect.DeepEqual(body, expectedBody) {
-		t.Logf("expected: %v", expectedBody)
-		t.Logf("actual: %v", body)
-		t.Error("request/response didnt match")
+			expectedBody := map[string]string{
+				"Method":     "POST",
+				"URL":        "https://0dhg9709da0dhg9709da0dhg9709da.lambda-url.eu-central-1.on.aws/example?key=value",
+				"RemoteAddr": inputPair[1],
+				"Body":       "hello world",
+			}
+
+			if !reflect.DeepEqual(body, expectedBody) {
+				t.Logf("expected: %v", expectedBody)
+				t.Logf("actual: %v", body)
+				t.Error("request/response didnt match")
+			}
+		})
 	}
 }
 
@@ -328,7 +338,7 @@ func TestFunctionURLWithPanicAndRecover(t *testing.T) {
 }
 
 func runTestFunctionURLPanicAndRecover[T any](t *testing.T, h func(context.Context, events.LambdaFunctionURLRequest) (T, error)) {
-	req := newFunctionURLRequest()
+	req := newFunctionURLRequest("127.0.0.1")
 	_, err := h(context.Background(), req)
 	if err == nil {
 		t.Error("expected to receive an error")
@@ -362,7 +372,7 @@ func TestFunctionURLDelayed(t *testing.T) {
 }
 
 func runTestFunctionURLDelayed[T any](t *testing.T, h func(context.Context, events.LambdaFunctionURLRequest) (T, error), ex extractor[T]) {
-	req := newFunctionURLRequest()
+	req := newFunctionURLRequest("127.0.0.1")
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Error(err)

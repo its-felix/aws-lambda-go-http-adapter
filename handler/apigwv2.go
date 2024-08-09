@@ -37,7 +37,7 @@ func convertApiGwV2Request(ctx context.Context, event events.APIGatewayV2HTTPReq
 		req.ProtoMajor, req.ProtoMinor = pMajor, pMinor
 	}
 
-	req.RemoteAddr = event.RequestContext.HTTP.SourceIP + ":http"
+	req.RemoteAddr = buildRemoteAddr(event.RequestContext.HTTP.SourceIP)
 	req.RequestURI = req.URL.RequestURI()
 
 	return req, nil

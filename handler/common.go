@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/base64"
 	"io"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -56,4 +57,8 @@ func getBody(body string, isB64 bool) io.Reader {
 	}
 
 	return b
+}
+
+func buildRemoteAddr(sourceIp string) string {
+	return net.JoinHostPort(sourceIp, "http")
 }
