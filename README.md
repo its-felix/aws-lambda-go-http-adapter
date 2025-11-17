@@ -1,3 +1,7 @@
+## Notes
+This project was created as an alternative to https://github.com/awslabs/aws-lambda-go-api-proxy with support for Lambda Function URL requests.
+For most cases, I recommend using https://github.com/awslabs/aws-lambda-web-adapter instead (potentially with https://github.com/its-felix/aws-lwa-go-middleware).
+
 # aws-lambda-go-http-adapter
 Simple HTTP adapter for AWS Lambda
 
